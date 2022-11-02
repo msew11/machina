@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
@@ -51,7 +52,8 @@ namespace Machina.Infrastructure
         // disable warning about this not being assigned in code, which is untrue since it is done via Marshal class.
 #pragma warning disable 0649
         // TCP Row Structure
-        private struct MIB_TCPROW_EX
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MIB_TCPROW_OWNER_PID
         {
             public TcpState dwState;
             public uint dwLocalAddr;
@@ -59,6 +61,15 @@ namespace Machina.Infrastructure
             public uint dwRemoteAddr;
             public int dwRemotePort;
             public uint dwProcessId;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MIB_TCPROW_LH
+        {
+            public TcpState dwState;
+            public uint dwLocalAddr;
+            public int dwLocalPort;
+            public uint dwRemoteAddr;
+            public int dwRemotePort;
         }
         private const int AF_INET = 2;
 
@@ -96,6 +107,11 @@ namespace Machina.Infrastructure
         { get; set; } = IPAddress.None;
 
 
+        private static readonly ushort[] _ffxivPorts = {
+            54992, 54993, 54994, 55006, 55007, 55021, 55022, 55023, 55024, 55025, 55026, 55027, 55028, 55029, 55030,
+            55031, 55032, 55033, 55034, 55035, 55036, 55037, 55038, 55039, 55040
+        };
+
         [DllImport("user32.dll", EntryPoint = "FindWindow", CharSet = CharSet.Unicode)]
         private static extern IntPtr FindWindow(string sClass, string sWindow);
         [DllImport("user32.dll", EntryPoint = "FindWindowEx", CharSet = CharSet.Unicode)]
@@ -130,35 +146,42 @@ namespace Machina.Infrastructure
         ///   and updates the connections collection.
         /// </summary>
         /// <param name="connections">List containing prior connections that needs to be maintained</param>
-        public unsafe void UpdateTCPIPConnections(IList<TCPConnection> connections)
+        public unsafe void UpdateTCPIPConnections(IList<TCPConnection> connections, bool pidFilter)
         {
             List<uint> _processFilterList = new List<uint>();
 
-            if (ProcessIDList.Count > 0)
-                _processFilterList.AddRange(ProcessIDList);
-            else if (ProcessID > 0)
-                _processFilterList.Add(ProcessID);
-            else if (!string.IsNullOrWhiteSpace(ProcessWindowClass)) // prefer it first since it is language independent, ascii only, and constent until the window is destroyed.
-                _processFilterList.AddRange(GetProcessIDByWindow(ProcessWindowClass, null));
-            else if (!string.IsNullOrWhiteSpace(ProcessWindowName))
-                _processFilterList.AddRange(GetProcessIDByWindow(null, ProcessWindowName));
-
-            if (_processFilterList.Count == 0)
+            if (pidFilter)
             {
-                if (connections.Count > 0)
-                {
-                    Trace.WriteLine($"ProcessTCPInfo: Process not found, closing {connections.Count} connections.", "DEBUG-MACHINA");
-                    for (int i = 0; i < connections.Count; i++)
-                    {
-                        Trace.WriteLine($"ProcessTCPInfo: Removing connection {connections[i]}", "DEBUG-MACHINA");
-                        connections[i].Socket?.StopCapture();
-                        connections[i].Socket?.Dispose();
-                        connections[i].Socket = null;
-                    }
-                    connections.Clear();
-                }
+                if (ProcessIDList.Count > 0)
+                    _processFilterList.AddRange(ProcessIDList);
+                else if (ProcessID > 0)
+                    _processFilterList.Add(ProcessID);
+                else if
+                    (!string.IsNullOrWhiteSpace(
+                        ProcessWindowClass)) // prefer it first since it is language independent, ascii only, and constent until the window is destroyed.
+                    _processFilterList.AddRange(GetProcessIDByWindow(ProcessWindowClass, null));
+                else if (!string.IsNullOrWhiteSpace(ProcessWindowName))
+                    _processFilterList.AddRange(GetProcessIDByWindow(null, ProcessWindowName));
 
-                return;
+                if (_processFilterList.Count == 0)
+                {
+                    if (connections.Count > 0)
+                    {
+                        Trace.WriteLine($"ProcessTCPInfo: Process not found, closing {connections.Count} connections.",
+                            "DEBUG-MACHINA");
+                        for (int i = 0; i < connections.Count; i++)
+                        {
+                            Trace.WriteLine($"ProcessTCPInfo: Removing connection {connections[i]}", "DEBUG-MACHINA");
+                            connections[i].Socket?.StopCapture();
+                            connections[i].Socket?.Dispose();
+                            connections[i].Socket = null;
+                        }
+
+                        connections.Clear();
+                    }
+
+                    return;
+                }
             }
 
             IntPtr ptrTCPTable = IntPtr.Zero;
@@ -170,7 +193,7 @@ namespace Machina.Infrastructure
             // attempt to allocate 5 times, in case there are frequent increases in the # of tcp connections
             for (int i = 0; i < 5; i++)
             {
-                ret = GetExtendedTcpTable(ptrTCPTable, ref bufferLength, false, AF_INET, TCP_TABLE_CLASS.TCP_TABLE_OWNER_PID_ALL, 0);
+                ret = GetExtendedTcpTable(ptrTCPTable, ref bufferLength, false, AF_INET, pidFilter ? TCP_TABLE_CLASS.TCP_TABLE_OWNER_PID_ALL : TCP_TABLE_CLASS.TCP_TABLE_BASIC_ALL, 0);
 
                 if (ret == 0)
                     break;
@@ -178,7 +201,7 @@ namespace Machina.Infrastructure
                 {
                     Marshal.FreeHGlobal(ptrTCPTable);
                     ptrTCPTable = IntPtr.Zero;
-                }
+                } 
 
                 // fix for constant connection churn
                 bufferLength *= 2;
@@ -196,18 +219,20 @@ namespace Machina.Infrastructure
 
                     for (int i = 0; i <= tcpTableCount - 1; i++)
                     {
-                        MIB_TCPROW_EX entry = *(MIB_TCPROW_EX*)tmpPtr;
-
-                        // Process if ProcessID matches
-                        if (_processFilterList.Contains(entry.dwProcessId))
+                        MIB_TCPROW_OWNER_PID* entry = (MIB_TCPROW_OWNER_PID*)tmpPtr;
+                        // Process if Port or PID matches
+                        bool portMatch = !pidFilter && Array.Exists(_ffxivPorts,
+                            port => port == (ushort)IPAddress.NetworkToHostOrder((short)entry->dwRemotePort));
+                        bool pidMatch = pidFilter && _processFilterList.Contains(entry->dwProcessId);
+                        if (portMatch || pidMatch)
                         {
                             bool bFound = false;
                             for (int j = 0; j < connections.Count; j++)
                             {
-                                if (connections[j].LocalIP == entry.dwLocalAddr &&
-                                    connections[j].RemoteIP == entry.dwRemoteAddr &&
-                                    connections[j].LocalPort == (ushort)IPAddress.NetworkToHostOrder((short)entry.dwLocalPort) &&
-                                    connections[j].RemotePort == (ushort)IPAddress.NetworkToHostOrder((short)entry.dwRemotePort)
+                                if (connections[j].LocalIP == entry->dwLocalAddr &&
+                                    connections[j].RemoteIP == entry->dwRemoteAddr &&
+                                    connections[j].LocalPort == (ushort)IPAddress.NetworkToHostOrder((short)entry->dwLocalPort) &&
+                                    connections[j].RemotePort == (ushort)IPAddress.NetworkToHostOrder((short)entry->dwRemotePort)
                                     )
                                 {
                                     bFound = true;
@@ -215,25 +240,25 @@ namespace Machina.Infrastructure
                                 }
                             }
 
-                            if (!bFound && entry.dwLocalAddr != 0)
+                            if (!bFound && entry->dwLocalAddr != 0)
                             {
                                 TCPConnection connection = new TCPConnection()
                                 {
-                                    LocalIP = entry.dwLocalAddr,
-                                    RemoteIP = entry.dwRemoteAddr,
-                                    LocalPort = (ushort)IPAddress.NetworkToHostOrder((short)entry.dwLocalPort),
-                                    RemotePort = (ushort)IPAddress.NetworkToHostOrder((short)entry.dwRemotePort),
-                                    ProcessId = entry.dwProcessId
+                                    LocalIP = entry->dwLocalAddr,
+                                    RemoteIP = entry->dwRemoteAddr,
+                                    LocalPort = (ushort)IPAddress.NetworkToHostOrder((short)entry->dwLocalPort),
+                                    RemotePort = (ushort)IPAddress.NetworkToHostOrder((short)entry->dwRemotePort),
+                                    ProcessId = pidFilter ? entry->dwProcessId : 0
                                 };
 
                                 connections.Add(connection);
 
-                                Trace.WriteLine($"ProcessTCPInfo: New connection detected for Process [{entry.dwProcessId}]: {connection}", "DEBUG-MACHINA");
+                                Trace.WriteLine($"ProcessTCPInfo: New connection detected for connection: {connection}", "DEBUG-MACHINA");
                             }
                         }
 
                         // increment pointer
-                        tmpPtr += sizeof(MIB_TCPROW_EX);
+                        tmpPtr += pidFilter ? sizeof(MIB_TCPROW_OWNER_PID) : sizeof(MIB_TCPROW_LH);
                     }
 
                     for (int i = connections.Count - 1; i >= 0; i--)
@@ -243,15 +268,17 @@ namespace Machina.Infrastructure
 
                         for (int j = 0; j <= tcpTableCount - 1; j++)
                         {
-                            MIB_TCPROW_EX entry = *(MIB_TCPROW_EX*)tmpPtr;
-
-                            // Process if ProcessID matches
-                            if (_processFilterList.Contains(entry.dwProcessId))
+                            MIB_TCPROW_OWNER_PID* entry = (MIB_TCPROW_OWNER_PID*)tmpPtr;
+                            // Process if Port or PID matches
+                            bool portMatch = !pidFilter && Array.Exists(_ffxivPorts,
+                                port => port == (ushort)IPAddress.NetworkToHostOrder((short)entry->dwRemotePort));
+                            bool pidMatch = pidFilter && _processFilterList.Contains(entry->dwProcessId);
+                            if (portMatch || pidMatch)
                             {
-                                if (connections[i].LocalIP == entry.dwLocalAddr &&
-                                    connections[i].RemoteIP == entry.dwRemoteAddr &&
-                                    connections[i].LocalPort == (ushort)IPAddress.NetworkToHostOrder((short)entry.dwLocalPort) &&
-                                    connections[i].RemotePort == (ushort)IPAddress.NetworkToHostOrder((short)entry.dwRemotePort)
+                                if (connections[i].LocalIP == entry->dwLocalAddr &&
+                                    connections[i].RemoteIP == entry->dwRemoteAddr &&
+                                    connections[i].LocalPort == (ushort)IPAddress.NetworkToHostOrder((short)entry->dwLocalPort) &&
+                                    connections[i].RemotePort == (ushort)IPAddress.NetworkToHostOrder((short)entry->dwRemotePort)
                                     )
                                 {
                                     found = true;
@@ -259,7 +286,7 @@ namespace Machina.Infrastructure
                                 }
                             }
                             // increment pointer
-                            tmpPtr += sizeof(MIB_TCPROW_EX);
+                            tmpPtr += pidFilter ? sizeof(MIB_TCPROW_OWNER_PID) : sizeof(MIB_TCPROW_LH);
                         }
                         if (!found)
                         {

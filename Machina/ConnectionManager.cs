@@ -54,7 +54,7 @@ namespace Machina
 
             // todo: do not pass in current connections?
             // get any active game connections
-            _processTCPInfo.UpdateTCPIPConnections(Connections);
+            _processTCPInfo.UpdateTCPIPConnections(Connections, _isWindows);
 
             foreach (TCPConnection connection in Connections)
             {
