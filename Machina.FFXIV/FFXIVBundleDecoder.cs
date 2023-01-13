@@ -93,9 +93,20 @@ namespace Machina.FFXIV
                         }
                         return;
                     }
+
+                    // Do not process if there is no payload
+                    if (header.length == sizeof(Server_BundleHeader))
+                    {
+                        offset += sizeof(Server_BundleHeader);
+                        if (offset == _allocated)
+                            _bundleBuffer = null;
+                        continue;
+                    }
+
                     byte[] message = DecompressFFXIVMessage(ref header, _bundleBuffer, offset, out int messageBufferSize);
                     if (message == null || messageBufferSize <= 0)
                     {
+                        Trace.WriteLine($"FFXIVBundleDecode() - Resetting stream. Message Null:{message == null}, Buffer Size:{messageBufferSize}");
                         offset = ResetStream(offset);
                         continue;
                     }

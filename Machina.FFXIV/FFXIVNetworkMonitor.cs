@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net;
 using Machina.Infrastructure;
 
@@ -74,7 +75,7 @@ namespace Machina.FFXIV
         { get; set; } = new TCPNetworkMonitorConfig.RPCapConf();
 
         public Oodle.OodleImplementation OodleImplementation
-        { get; set; } = Oodle.OodleImplementation.FfxivTcp;
+        { get; set; } = Oodle.OodleImplementation.FfxivUdp;
 
         public string OodlePath
         { get; set; } = @"C:\Program Files (x86)\FINAL FANTASY XIV - A Realm Reborn\game\ffxiv_dx11.exe";
