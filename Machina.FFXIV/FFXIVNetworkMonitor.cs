@@ -15,8 +15,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Net;
+using Machina.FFXIV.Deucalion;
 using Machina.Infrastructure;
 
 namespace Machina.FFXIV
@@ -77,6 +77,9 @@ namespace Machina.FFXIV
         public Oodle.OodleImplementation OodleImplementation
         { get; set; } = Oodle.OodleImplementation.FfxivTcp;
 
+        public bool UseDeucalion
+        { get; set; }
+
         public string OodlePath
         { get; set; } = @"C:\Program Files (x86)\FINAL FANTASY XIV - A Realm Reborn\game\ffxiv_dx11.exe";
 
@@ -105,6 +108,7 @@ namespace Machina.FFXIV
         #endregion
 
         private TCPNetworkMonitor _monitor;
+        private DeucalionClient _deucalionClient;
         private bool _disposedValue;
 
         private readonly Dictionary<string, FFXIVBundleDecoder> _sentDecoders = new Dictionary<string, FFXIVBundleDecoder>();
@@ -124,22 +128,33 @@ namespace Machina.FFXIV
             if (MessageReceivedEventHandler == null)
                 throw new ArgumentException("MessageReceived delegate must be specified.");
 
-            _monitor = new TCPNetworkMonitor();
-            _monitor.Config.ProcessID = ProcessID;
-            _monitor.Config.ProcessIDList = ProcessIDList;
-            if (_monitor.Config.ProcessID == 0)
-                _monitor.Config.WindowName = WindowName;
-            _monitor.Config.MonitorType = MonitorType;
-            _monitor.Config.LocalIP = LocalIP;
-            _monitor.Config.UseRemoteIpFilter = UseRemoteIpFilter;
-            _monitor.Config.RPCap = RPCap;
+            if (UseDeucalion)
+            {
+                string library = DeucalionInjector.ExtractLibrary();
+                DeucalionInjector.InjectLibrary((int)ProcessID, library);
 
-            _monitor.DataSentEventHandler = (TCPConnection connection, byte[] data) => ProcessSentMessage(connection, data);
-            _monitor.DataReceivedEventHandler = (TCPConnection connection, byte[] data) => ProcessReceivedMessage(connection, data);
+                _deucalionClient = new DeucalionClient();
+                _deucalionClient.MessageReceived = (byte[] message) => ProcessDeucalionMessage(message);
+                _deucalionClient.Connect((int)ProcessID);
+            }
+            else
+            {
+                _monitor = new TCPNetworkMonitor();
+                _monitor.Config.ProcessID = ProcessID;
+                _monitor.Config.ProcessIDList = ProcessIDList;
+                if (_monitor.Config.ProcessID == 0)
+                    _monitor.Config.WindowName = WindowName;
+                _monitor.Config.MonitorType = MonitorType;
+                _monitor.Config.LocalIP = LocalIP;
+                _monitor.Config.UseRemoteIpFilter = UseRemoteIpFilter;
+                _monitor.Config.RPCap = RPCap;
 
-            Oodle.OodleFactory.SetImplementation(OodleImplementation, OodlePath);
+                _monitor.DataSentEventHandler = (TCPConnection connection, byte[] data) => ProcessSentMessage(connection, data);
+                _monitor.DataReceivedEventHandler = (TCPConnection connection, byte[] data) => ProcessReceivedMessage(connection, data);
 
-            _monitor.Start();
+                Oodle.OodleFactory.SetImplementation(OodleImplementation, OodlePath);
+                _monitor.Start();
+            }
         }
 
         /// <summary>
@@ -147,11 +162,21 @@ namespace Machina.FFXIV
         /// </summary>
         public void Stop()
         {
-            _monitor.DataSentEventHandler = null;
-            _monitor.DataReceivedEventHandler = null;
-            _monitor.Stop();
-            _monitor.Dispose();
-            _monitor = null;
+            if (_monitor != null)
+            {
+                _monitor.DataSentEventHandler = null;
+                _monitor.DataReceivedEventHandler = null;
+                _monitor.Stop();
+                _monitor.Dispose();
+                _monitor = null;
+            }
+
+            if (_deucalionClient != null)
+            {
+                _deucalionClient.Disconnect();
+                _deucalionClient.Dispose();
+                _deucalionClient = null;
+            }
 
             _sentDecoders.Clear();
             _receivedDecoders.Clear();
@@ -183,6 +208,17 @@ namespace Machina.FFXIV
             }
 
         }
+
+        public void ProcessDeucalionMessage(byte[] data)
+        {
+            // TCP Connection is irrelevent for this, but needed by interface, so make new one.
+            TCPConnection connection = new TCPConnection();
+
+            (long epoch, byte[] packet) = DeucalionClient.ConvertDeucalionFormatToPacketFormat(data);
+
+            OnMessageReceived(connection, epoch, packet);
+        }
+
 
         protected virtual void Dispose(bool disposing)
         {
