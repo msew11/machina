@@ -42,9 +42,6 @@ namespace Machina
 
         public void Refresh()
         {
-            if ((unchecked(_refreshAge++) != 0) && !_isWindows)
-                return;
-
             // Update any filters
             _processTCPInfo.ProcessID = Config.ProcessID;
             _processTCPInfo.ProcessIDList = Config.ProcessIDList;
