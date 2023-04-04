@@ -135,9 +135,11 @@ namespace Machina.FFXIV
                 /*
                 if (ProcessID == 0)
                     throw new ArgumentException("ProcessID must be specified for Deucalion.");
-                
+
                 string library = DeucalionInjector.ExtractLibrary();
-                DeucalionInjector.InjectLibrary((int)ProcessID, library);
+
+                // Note: if InjectLibrary fails, continue attempting to read from the game.  it is possible the library was already injected.
+                _ = DeucalionInjector.InjectLibrary((int)ProcessID, library);
 
                 _deucalionClient = new DeucalionClient();
                 _deucalionClient.MessageSent = (message) => ProcessDeucalionMessage(message, true);
@@ -186,6 +188,8 @@ namespace Machina.FFXIV
 
             if (_deucalionClient != null)
             {
+                _deucalionClient.MessageSent = null;
+                _deucalionClient.MessageReceived = null;
                 _deucalionClient.Disconnect();
                 _deucalionClient.Dispose();
                 _deucalionClient = null;
@@ -236,7 +240,7 @@ namespace Machina.FFXIV
             connection.ProcessId = ProcessID;
 
             (long epoch, byte[] packet) = DeucalionClient.ConvertDeucalionFormatToPacketFormat(data);
-          
+
             if (isSend)
             {
                 OnMessageSent(connection, epoch, packet);

@@ -1,4 +1,18 @@
-﻿using System;
+﻿// Copyright © 2023 Ravahn - All Rights Reserved
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY. without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see<http://www.gnu.org/licenses/>.
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -11,7 +25,7 @@ namespace Machina.FFXIV.Deucalion
     {
         #region native functions
         [DllImport("advapi32.dll", SetLastError = true)]
-        private static extern uint GetSecurityInfo(IntPtr handle, SE_OBJECT_TYPE ObjectType, SECURITY_INFORMATION SecurityInfo, IntPtr pSidOwner, 
+        private static extern uint GetSecurityInfo(IntPtr handle, SE_OBJECT_TYPE ObjectType, SECURITY_INFORMATION SecurityInfo, IntPtr pSidOwner,
             IntPtr pSidGroup, out IntPtr pDacl, IntPtr pSacl, out IntPtr pSecurityDescriptor);
 
         [DllImport("advapi32.dll", EntryPoint = "SetSecurityInfo", CallingConvention = CallingConvention.Winapi,
@@ -29,7 +43,9 @@ namespace Machina.FFXIV.Deucalion
         private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
 
         [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+#pragma warning disable CA1711 // Identifiers should not have incorrect suffix
         private static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress,
+#pragma warning restore CA1711 // Identifiers should not have incorrect suffix
             uint dwSize, uint flAllocationType, uint flProtect);
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -41,13 +57,13 @@ namespace Machina.FFXIV.Deucalion
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool CloseHandle(IntPtr hObject);
+        private static extern bool CloseHandle(IntPtr hObject);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr LocalFree(IntPtr hMem);
 
         [Flags]
-        private enum ProcessAccessFlags : uint
+        private enum ProcessAccess : uint
         {
             PROCESS_ALL_ACCESS = 0x001F0FFF,
             PROCESS_TERMINATE = 0x00000001,
@@ -68,10 +84,12 @@ namespace Machina.FFXIV.Deucalion
             WRITE_OWNER = 0x00080000
         }
 
-        // used for memory allocation
-        const uint MEM_COMMIT = 0x00001000;
-        const uint MEM_RESERVE = 0x00002000;
-        const uint PAGE_READWRITE = 4;
+        private enum MemoryProtection : uint
+        {
+            PAGE_READWRITE = 4,
+            MEM_COMMIT = 0x00001000,
+            MEM_RESERVE = 0x00002000,
+        }
 
 
         private enum SE_OBJECT_TYPE
@@ -102,21 +120,12 @@ namespace Machina.FFXIV.Deucalion
             PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000
         }
 
-        private struct SECURITY_DESCRIPTOR
-        {
-            public byte Revision;
-            public byte Sbz1;
-            public short Control;
-            public IntPtr Owner;
-            public IntPtr Group;
-            public IntPtr Sacl;
-            public IntPtr Dacl;
-        }
         #endregion
 
+        private static readonly string _resourceFileName = "deucalion-0.9.2.dll";
         public static string ExtractLibrary()
         {
-            string fileName = Path.Combine(Path.GetTempPath(), "Machina.FFXIV", "deucalion-0.8.0.dll");
+            string fileName = Path.Combine(Path.GetTempPath(), "Machina.FFXIV", _resourceFileName);
             if (File.Exists(fileName))
             {
                 try
@@ -132,10 +141,10 @@ namespace Machina.FFXIV.Deucalion
             if (!File.Exists(fileName))
             {
 
-                if (!Directory.Exists(fileName.Substring(0, fileName.LastIndexOf("\\") + 1)))
-                    Directory.CreateDirectory(fileName.Substring(0, fileName.LastIndexOf("\\") + 1));
+                if (!Directory.Exists(fileName.Substring(0, fileName.LastIndexOf("\\", StringComparison.Ordinal) + 1)))
+                    _ = Directory.CreateDirectory(fileName.Substring(0, fileName.LastIndexOf("\\", StringComparison.Ordinal) + 1));
 
-                string resourceName = $"Machina.FFXIV.Deucalion.Distrib.deucalion-0.8.0.dll";
+                string resourceName = $"Machina.FFXIV.Deucalion.Distrib.{_resourceFileName}";
                 using (Stream s = typeof(DeucalionInjector).Module.Assembly.GetManifestResourceStream(resourceName))
                 {
                     using (BinaryReader sr = new BinaryReader(s))
@@ -146,7 +155,7 @@ namespace Machina.FFXIV.Deucalion
                 }
             }
 
-            string release_checksum = "15-76-26-8C-BD-7A-B3-9B-7A-81-C6-8B-DC-16-AC-E1";//pre-0.7.0: "1B-9B-7A-E7-5F-C1-A7-05-40-AD-60-C7-62-77-01-36";
+            string release_checksum = "1E-8E-B0-BA-1B-45-DF-A0-DD-9E-FE-36-8A-A4-35-D0-CC-7F-15-60-1A-9D-29-3E-42-24-99-23-AF-5E-C8-87";
 
             // validate checksum
             byte[] checksum = CalculateChecksum(fileName);
@@ -160,74 +169,95 @@ namespace Machina.FFXIV.Deucalion
 
         public static byte[] CalculateChecksum(string filename)
         {
-            using (var md5 = MD5.Create())
+            using (SHA256 hashAlgo = SHA256.Create())
             {
-                using (var stream = File.OpenRead(filename))
+                using (FileStream stream = File.OpenRead(filename))
                 {
-                    return md5.ComputeHash(stream);
+                    return hashAlgo.ComputeHash(stream);
                 }
             }
         }
         public static bool InjectLibrary(int processId, string deucalionPath)
         {
-            if (!System.IO.File.Exists(deucalionPath))
+            if (!File.Exists(deucalionPath))
             {
                 Trace.WriteLine($"DeucalionInjector: Cannot find the Deucalion library at {deucalionPath}.", "DEBUG-MACHINA");
                 return false;
             }
 
-            UpdateProcessDACL(processId);
+            // Note: if this method does not work, do not stop processing.  If user runs with elevated permissions, injection will still work.
+            _ = UpdateProcessDACL(processId);
 
-            // Get process handle for specified process id
-            IntPtr procHandle = OpenProcess((uint)(ProcessAccessFlags.PROCESS_CREATE_THREAD | ProcessAccessFlags.PROCESS_QUERY_INFORMATION | ProcessAccessFlags.PROCESS_VM_OPERATION | ProcessAccessFlags.PROCESS_VM_WRITE | ProcessAccessFlags.PROCESS_VM_READ), 
-                false, 
-                processId);
-            if (procHandle == IntPtr.Zero)
+            IntPtr procHandle = IntPtr.Zero;
+            IntPtr threadHandle = IntPtr.Zero;
+            try
             {
-                Trace.WriteLine($"DeucalionInjector: Unable to call OpenProcess with id {processId}.", "DEBUG-MACHINA");
+                // Get process handle for specified process id
+                procHandle = OpenProcess((uint)(ProcessAccess.PROCESS_CREATE_THREAD | ProcessAccess.PROCESS_QUERY_INFORMATION | ProcessAccess.PROCESS_VM_OPERATION | ProcessAccess.PROCESS_VM_WRITE | ProcessAccess.PROCESS_VM_READ),
+                    false,
+                    processId);
+                if (procHandle == IntPtr.Zero)
+                {
+                    Trace.WriteLine($"DeucalionInjector: Unable to call OpenProcess with id {processId}.", "DEBUG-MACHINA");
+                    return false;
+                }
+
+                // get local address for kernel32.dll LoadLibraryA method.  This assumes remote process has same address.
+                IntPtr loadLibraryAddr = GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryW");
+                if (loadLibraryAddr == IntPtr.Zero)
+                    return false;
+
+                byte[] filenameBytes = Encoding.Unicode.GetBytes(deucalionPath);
+
+                // Allocate memory in remote process to load the DLL name
+                IntPtr allocMemAddress = VirtualAllocEx(
+                    procHandle,
+                    IntPtr.Zero,
+                    (uint)(filenameBytes.Length + 2),
+                    (uint)(MemoryProtection.MEM_COMMIT | MemoryProtection.MEM_RESERVE), (uint)MemoryProtection.PAGE_READWRITE);
+                if (allocMemAddress == IntPtr.Zero)
+                {
+                    Trace.WriteLine($"DeucalionInjector: Unable to allocate memory in process id {processId}.", "DEBUG-MACHINA");
+                    return false;
+                }
+
+                // Write file name to remote process
+                bool result = WriteProcessMemory(procHandle,
+                    allocMemAddress,
+                    filenameBytes,
+                    (uint)(filenameBytes.Length + 2),
+                    out UIntPtr bytesWritten);
+                if (result == false || bytesWritten == UIntPtr.Zero)
+                {
+                    Trace.WriteLine($"DeucalionInjector: Unable to write filename to memory in process id {processId}.", "DEBUG-MACHINA");
+                    return false;
+                }
+
+                // Create and start remote thread in process to call LoadLibraryA with the dll name as the argument
+                threadHandle = CreateRemoteThread(procHandle, IntPtr.Zero, 0, loadLibraryAddr, allocMemAddress, 0, IntPtr.Zero);
+                if (threadHandle == IntPtr.Zero)
+                {
+                    Trace.WriteLine($"DeucalionInjector: Unable to start remote thread in process id {processId}.", "DEBUG-MACHINA");
+                    return false;
+                }
+
+                Trace.WriteLine($"DeucalionInjector: Successfully injected Deucalion dll into process id {processId}.", "DEBUG-MACHINA");
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"DeucalionInjector: Unexpected error in Injectlibrary for {processId}: {ex}", "DEBUG-MACHINA");
                 return false;
             }
-
-            // get local address for kernel32.dll LoadLibraryA method.  This assumes remote process has same address.
-            IntPtr loadLibraryAddr = GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryA");
-            if (loadLibraryAddr == IntPtr.Zero)
-                return false;
-
-            // Allocate memory in remote process to load the DLL name
-            IntPtr allocMemAddress = VirtualAllocEx(
-                procHandle, 
-                IntPtr.Zero, 
-                (uint)((deucalionPath.Length + 1) * Marshal.SizeOf(typeof(char))),
-                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-            if (allocMemAddress == IntPtr.Zero)
+            finally
             {
-                Trace.WriteLine($"DeucalionInjector: Unable to allocate memory in process id {processId}.", "DEBUG-MACHINA");
-                return false;
+                if (procHandle != IntPtr.Zero)
+                    _ = CloseHandle(procHandle);
+
+                if (threadHandle != IntPtr.Zero)
+                    _ = CloseHandle(threadHandle);
             }
-
-            // Write file name to remote process
-            bool result = WriteProcessMemory(procHandle, 
-                allocMemAddress,
-                Encoding.Default.GetBytes(deucalionPath), 
-                (uint)((deucalionPath.Length + 1) * Marshal.SizeOf(typeof(char))), 
-                out UIntPtr bytesWritten);
-            if (result == false || bytesWritten == UIntPtr.Zero)
-            {
-                Trace.WriteLine($"DeucalionInjector: Unable to write filename to memory in process id {processId}.", "DEBUG-MACHINA");
-                return false;
-            }
-
-            // Create and start remote thread in process to call LoadLibraryA with the dll name as the argument
-            IntPtr threadResult = CreateRemoteThread(procHandle, IntPtr.Zero, 0, loadLibraryAddr, allocMemAddress, 0, IntPtr.Zero);
-            if (threadResult == IntPtr.Zero)
-            {
-                Trace.WriteLine($"DeucalionInjector: Unable to start remote thread in process id {processId}.", "DEBUG-MACHINA");
-                return false;
-            }
-
-            Trace.WriteLine($"DeucalionInjector: Successfully injected Deucalion dll into process id {processId}.", "DEBUG-MACHINA");
-
-            return true;
         }
 
         private static unsafe bool UpdateProcessDACL(int processId)
@@ -239,7 +269,7 @@ namespace Machina.FFXIV.Deucalion
             {
 
                 // Get process handle for specified process id
-                procHandle = OpenProcess((uint)(ProcessAccessFlags.PROCESS_QUERY_LIMITED_INFORMATION | ProcessAccessFlags.WRITE_DAC | ProcessAccessFlags.READ_CONTROL),
+                procHandle = OpenProcess((uint)(ProcessAccess.PROCESS_QUERY_LIMITED_INFORMATION | ProcessAccess.WRITE_DAC | ProcessAccess.READ_CONTROL),
                     false,
                     processId);
                 if (procHandle == IntPtr.Zero)
