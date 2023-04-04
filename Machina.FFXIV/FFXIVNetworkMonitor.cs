@@ -147,7 +147,7 @@ namespace Machina.FFXIV
                 _deucalionClient.Connect((int)ProcessID);
                 */
 
-                // We are replacing Deucalion with Dalamud here, while leavig the Machina.FFXIV API intact
+                // We are replacing Deucalion with Dalamud here, while leaving the Machina.FFXIV API intact
                 _dalamudClient = new DalamudClient();
                 _dalamudClient.MessageReceived = (long epoch, byte[] message) => ProcessDalamudMessage(epoch, message);
                 _dalamudClient.Connect();
