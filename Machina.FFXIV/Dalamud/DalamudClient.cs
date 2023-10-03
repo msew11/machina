@@ -7,12 +7,13 @@ using System.Threading.Tasks;
 using Dalamud.Game.Network;
 using Machina.FFXIV.Headers;
 using System.Collections.Concurrent;
+using Dalamud.Plugin.Services;
 
 namespace Machina.FFXIV.Dalamud
 {
     public class DalamudClient : IDisposable
     {
-        public static GameNetwork GameNetwork { get; set; }
+        public static IGameNetwork GameNetwork { get; set; }
 
         public delegate void MessageReceivedHandler(long epoch, byte[] message);
         public MessageReceivedHandler MessageReceived;
