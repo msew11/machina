@@ -91,7 +91,7 @@ namespace Machina.FFXIV.Dalamud
                     {
                         while (_messageQueue.TryDequeue(out var messageInfo))
                         {
-                            var epoch = (messageInfo.Item1 - GetDate1970()).Milliseconds;
+                            var epoch = (messageInfo.Item1 - GetDate1970()).Ticks / TimeSpan.TicksPerMillisecond;
                             OnMessageReceived(epoch, messageInfo.Item2);
                         }
 
