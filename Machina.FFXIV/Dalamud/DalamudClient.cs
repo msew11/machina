@@ -14,13 +14,16 @@ namespace Machina.FFXIV.Dalamud
     public class DalamudClient : IDisposable
     {
         public static IGameNetwork GameNetwork { get; set; }
+        public delegate DateTime GetTimeDelegate();
+        public static GetTimeDelegate GetServerTime;
+        public static GetTimeDelegate GetDate1970;
 
         public delegate void MessageReceivedHandler(long epoch, byte[] message);
         public MessageReceivedHandler MessageReceived;
 
         private CancellationTokenSource _tokenSource;
         private Task _monitorTask;
-        private ConcurrentQueue<(long, byte[])> _messageQueue;
+        private ConcurrentQueue<(DateTime, byte[])> _messageQueue;
 
         private DateTime _lastLoopError;
 
@@ -69,7 +72,7 @@ namespace Machina.FFXIV.Dalamud
                 return;
             }
 
-            _messageQueue = new ConcurrentQueue<(long, byte[])>();
+            _messageQueue = new ConcurrentQueue<(DateTime, byte[])>();
 
             GameNetwork.NetworkMessage += GameNetworkOnNetworkMessage;
 
@@ -87,7 +90,10 @@ namespace Machina.FFXIV.Dalamud
                     try
                     {
                         while (_messageQueue.TryDequeue(out var messageInfo))
-                            OnMessageReceived(messageInfo.Item1, messageInfo.Item2);
+                        {
+                            var epoch = (messageInfo.Item1 - GetDate1970()).Milliseconds;
+                            OnMessageReceived(epoch, messageInfo.Item2);
+                        }
 
                         Task.Delay(10, token).Wait(token);
                     }
@@ -126,7 +132,7 @@ namespace Machina.FFXIV.Dalamud
                 size = OpcodeSizes[(Server_MessageType)opcode];
 
             // we don't have the original package timestamp but this seems to be close enough (+- 5ms)
-            var epoch = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var serverTime = GetServerTime();
             dataPtr -= 0x20;
 
             var stream = new UnmanagedMemoryStream((byte*)dataPtr.ToPointer(), size);
@@ -144,7 +150,7 @@ namespace Machina.FFXIV.Dalamud
                 headerPtr->ActorID = sourceActorId;
             }
 
-            _messageQueue.Enqueue((epoch, message));
+            _messageQueue.Enqueue((serverTime, message));
 
             reader.Close();
             stream.Close();
