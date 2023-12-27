@@ -16,7 +16,6 @@ namespace Machina.FFXIV.Dalamud
         public static IGameNetwork GameNetwork { get; set; }
         public delegate DateTime GetTimeDelegate();
         public static GetTimeDelegate GetServerTime;
-        public static GetTimeDelegate GetDate1970;
 
         public delegate void MessageReceivedHandler(long epoch, byte[] message);
         public MessageReceivedHandler MessageReceived;
@@ -91,7 +90,7 @@ namespace Machina.FFXIV.Dalamud
                     {
                         while (_messageQueue.TryDequeue(out var messageInfo))
                         {
-                            var epoch = (messageInfo.Item1 - GetDate1970()).Ticks / TimeSpan.TicksPerMillisecond;
+                            var epoch = (messageInfo.Item1 - DateTime.UnixEpoch.ToLocalTime()).Ticks / TimeSpan.TicksPerMillisecond;
                             OnMessageReceived(epoch, messageInfo.Item2);
                         }
 
