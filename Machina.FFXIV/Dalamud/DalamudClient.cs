@@ -120,7 +120,7 @@ namespace Machina.FFXIV.Dalamud
 
         protected unsafe void GameNetworkOnNetworkMessage(IntPtr dataPtr, ushort opcode, uint sourceActorId, uint targetActorId, NetworkMessageDirection direction)
         {
-            if (direction != NetworkMessageDirection.ZoneDown)
+            if (direction != NetworkMessageDirection.ZoneDown || GetServerTime == null)
                 return;
 
             var size = 0x1000;    // best effort
